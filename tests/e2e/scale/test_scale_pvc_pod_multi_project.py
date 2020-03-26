@@ -53,7 +53,7 @@ class TestMultiProjectScalePVCPOD(E2ETest):
 
         # Set PVC count based on number of OCS workers
         ocs_nodes = node.get_typed_nodes(node_type='worker')
-        pvc_count = {3: 50, 6: 3000, 9: 4500}
+        pvc_count = {3: 1500, 6: 3000, 9: 4500}
         scale_count = pvc_count[len(ocs_nodes)]
 
         # Other variables
@@ -68,10 +68,10 @@ class TestMultiProjectScalePVCPOD(E2ETest):
         # Pre-requisite check for number of OSD's and app worker nodes.
         helpers.add_required_osd_count(total_osd_nos=3)
 
-        # # Create machineset for app worker nodes, which will create one app worker node
-        # self.ms_name = machine.create_custom_machineset(instance_type='m5.4xlarge', zone='a')
-        # machine.wait_for_new_node_to_be_ready(self.ms_name)
-        # self.app_worker_nodes = machine.get_machine_from_machineset(self.ms_name)
+        # Create machineset for app worker nodes, which will create one app worker node
+        self.ms_name = machine.create_custom_machineset(instance_type='m5.4xlarge', zone='a')
+        machine.wait_for_new_node_to_be_ready(self.ms_name)
+        self.app_worker_nodes = machine.get_machine_from_machineset(self.ms_name)
 
         # Create namespace
         self.namespace_list.append(helpers.create_project())
@@ -91,13 +91,13 @@ class TestMultiProjectScalePVCPOD(E2ETest):
                 all_pod_obj.extend(pod_obj)
                 try:
                     # Check enough resources available in the dedicated app workers
-                    # if helpers.add_worker_based_on_cpu_utilization(
-                    #     machineset_name=self.ms_name, node_count=1, expected_percent=75,
-                    #     role_type='app,worker'
-                    # ):
-                    #     logging.info(f"Nodes added for app pod creation")
-                    # else:
-                    #     logging.info(f"Existing resource are enough to create more pods")
+                    if helpers.add_worker_based_on_cpu_utilization(
+                        machineset_name=self.ms_name, node_count=1, expected_percent=75,
+                        role_type='app,worker'
+                    ):
+                        logging.info(f"Nodes added for app pod creation")
+                    else:
+                        logging.info(f"Existing resource are enough to create more pods")
 
                     # # Check for ceph cluster OSD utilization
                     # if not cluster.validate_osd_utilization(osd_used=80):
