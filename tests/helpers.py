@@ -14,17 +14,18 @@ import threading
 import random
 
 from ocs_ci.ocs.ocp import OCP
+
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
+from ocs_ci.ocs import constants, defaults, ocp, node
+from ocs_ci.utility import templating
+from ocs_ci.ocs.resources import pod, pvc
+from ocs_ci.ocs.resources.ocs import OCS
 from ocs_ci.ocs.exceptions import (
     TimeoutExpiredError, UnexpectedBehaviour,
     UnavailableBuildException, UnavailableResourceException,
     CommandFailed, ResourceWrongStatusException
 )
-from concurrent.futures import ThreadPoolExecutor
-from ocs_ci.ocs import constants, defaults, ocp, node, machine, cluster
-from ocs_ci.utility import templating
-from ocs_ci.ocs.resources import pod, pvc, storage_cluster
-from ocs_ci.ocs.resources.ocs import OCS
 from ocs_ci.utility.retry import retry
 from ocs_ci.utility.utils import TimeoutSampler, ocsci_log_path, run_cmd
 from ocs_ci.framework import config
@@ -299,7 +300,7 @@ def default_ceph_block_pool():
     return constants.DEFAULT_BLOCKPOOL
 
 
-def create_ceph_block_pool(pool_name=None):
+def create_ceph_block_pool(pool_name=None, failure_domain=None, verify=True):
     """
     Create a Ceph block pool
     ** This method should not be used anymore **
@@ -307,6 +308,9 @@ def create_ceph_block_pool(pool_name=None):
 
     Args:
         pool_name (str): The pool name to create
+        failure_domain (str): Failure domain name
+        verify (bool): True to verify the pool exists after creation,
+                       False otherwise
 
     Returns:
         OCS: An OCS instance for the Ceph block pool
@@ -318,13 +322,14 @@ def create_ceph_block_pool(pool_name=None):
         )
     )
     cbp_data['metadata']['namespace'] = defaults.ROOK_CLUSTER_NAMESPACE
-    cbp_data['spec']['failureDomain'] = get_failure_domin()
+    cbp_data['spec']['failureDomain'] = failure_domain or get_failure_domin()
     cbp_obj = create_resource(**cbp_data)
     cbp_obj.reload()
 
-    assert verify_block_pool_exists(cbp_obj.name), (
-        f"Block pool {cbp_obj.name} does not exist"
-    )
+    if verify:
+        assert verify_block_pool_exists(cbp_obj.name), (
+            f"Block pool {cbp_obj.name} does not exist"
+        )
     return cbp_obj
 
 
@@ -1510,6 +1515,37 @@ def craft_s3_command(mcg_obj, cmd):
     return f"{base_command}{cmd}{string_wrapper}"
 
 
+def craft_s3_api_command(mcg_obj, cmd):
+    """
+    Crafts the AWS cli S3 API level commands
+
+    Args:
+        mcg_obj: An MCG object containing the MCG S3 connection credentials
+        cmd: The AWSCLI API command to run
+
+    Returns:
+        str: The crafted command, ready to be executed on the pod
+
+    """
+    if mcg_obj:
+        base_command = (
+            f"sh -c \"AWS_ACCESS_KEY_ID={mcg_obj.access_key_id} "
+            f"AWS_SECRET_ACCESS_KEY={mcg_obj.access_key} "
+            f"AWS_DEFAULT_REGION={mcg_obj.region} "
+            f"aws s3api "
+            f"--endpoint={mcg_obj.s3_endpoint} "
+            f"--no-verify-ssl "
+        )
+        string_wrapper = "\""
+    else:
+        base_command = (
+            f"aws s3api --no-verify-ssl --no-sign-request "
+        )
+        string_wrapper = ''
+
+    return f"{base_command}{cmd}{string_wrapper}"
+
+
 def wait_for_resource_count_change(
     func_to_use, previous_num, namespace, change_type='increase',
     min_difference=1, timeout=20, interval=2, **func_kwargs
@@ -2079,6 +2115,8 @@ def add_required_osd_count(total_osd_nos=3):
 
     """
     # Make sure setup has required number of OSDs
+    from ocs_ci.ocs import cluster
+    from ocs_ci.ocs.resources import storage_cluster
     actual_osd_count = cluster.count_cluster_osd()
     ocs_nodes = node.get_typed_nodes(node_type='worker')
     expected_osd_count = len(ocs_nodes) * total_osd_nos
@@ -2108,6 +2146,7 @@ def add_worker_based_on_cpu_utilization(
         bool: True if Nodes gets added, else false.
 
     """
+    from ocs_ci.ocs import machine
     # Check for CPU utilization on each nodes
     app_nodes = node.get_typed_nodes(node_type=role_type)
     uti_dict = node.get_node_resource_utilization_from_oc_describe(node_type=role_type)
@@ -2142,6 +2181,7 @@ def suggest_io_size_based_on_cls_usage(custom_size_dict=None):
         size (str): IO size to be considered for cluster env
 
     """
+    from ocs_ci.ocs import cluster
     osd_dict = cluster.get_osd_utilization()
     if custom_size_dict:
         size_dict = custom_size_dict
@@ -2183,6 +2223,7 @@ def suggest_fio_rate_based_on_cls_iops(custom_iops_dict=None, osd_size=2048):
         rate_param (str): Rate parm for fio based on ceph cluster IOPs
 
     """
+    from ocs_ci.ocs import cluster
     # Check for IOPs limit percentage of cluster and accordingly suggest fio rate param
     cls_obj = cluster.CephCluster()
     iops = cls_obj.get_iops_percentage(osd_size=osd_size)
