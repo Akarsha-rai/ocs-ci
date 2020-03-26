@@ -552,6 +552,9 @@ STAGE_CA_FILE = os.path.join(
     TEMPLATE_DIR, "ocp-deployment", "stage-ca.crt"
 )
 
+# Scale Params
+SCALE_NODE_SELECTOR = {'node-role.kubernetes.io/app': 'app-scale'}
+
 # PDB NAMES
 MDS_PDB = "rook-ceph-mds-ocs-storagecluster-cephfilesystem"
 OSD_PDB = "rook-ceph-osd-"

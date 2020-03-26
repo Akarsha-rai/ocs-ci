@@ -11,21 +11,20 @@ import tempfile
 import time
 import yaml
 import threading
+import random
 
 from ocs_ci.ocs.ocp import OCP
-
 from uuid import uuid4
 from ocs_ci.ocs.exceptions import (
-    TimeoutExpiredError,
-    UnexpectedBehaviour,
-    UnavailableBuildException
+    TimeoutExpiredError, UnexpectedBehaviour,
+    UnavailableBuildException, UnavailableResourceException,
+    CommandFailed, ResourceWrongStatusException
 )
 from concurrent.futures import ThreadPoolExecutor
-from ocs_ci.ocs import constants, defaults, ocp, node
+from ocs_ci.ocs import constants, defaults, ocp, node, machine, cluster
 from ocs_ci.utility import templating
-from ocs_ci.ocs.resources import pod, pvc
+from ocs_ci.ocs.resources import pod, pvc, storage_cluster
 from ocs_ci.ocs.resources.ocs import OCS
-from ocs_ci.ocs.exceptions import CommandFailed, ResourceWrongStatusException
 from ocs_ci.utility.retry import retry
 from ocs_ci.utility.utils import TimeoutSampler, ocsci_log_path, run_cmd
 from ocs_ci.framework import config
@@ -300,7 +299,7 @@ def default_ceph_block_pool():
     return constants.DEFAULT_BLOCKPOOL
 
 
-def create_ceph_block_pool(pool_name=None, failure_domain=None, verify=True):
+def create_ceph_block_pool(pool_name=None):
     """
     Create a Ceph block pool
     ** This method should not be used anymore **
@@ -308,9 +307,6 @@ def create_ceph_block_pool(pool_name=None, failure_domain=None, verify=True):
 
     Args:
         pool_name (str): The pool name to create
-        failure_domain (str): Failure domain name
-        verify (bool): True to verify the pool exists after creation,
-                       False otherwise
 
     Returns:
         OCS: An OCS instance for the Ceph block pool
@@ -322,14 +318,13 @@ def create_ceph_block_pool(pool_name=None, failure_domain=None, verify=True):
         )
     )
     cbp_data['metadata']['namespace'] = defaults.ROOK_CLUSTER_NAMESPACE
-    cbp_data['spec']['failureDomain'] = failure_domain or get_failure_domin()
+    cbp_data['spec']['failureDomain'] = get_failure_domin()
     cbp_obj = create_resource(**cbp_data)
     cbp_obj.reload()
 
-    if verify:
-        assert verify_block_pool_exists(cbp_obj.name), (
-            f"Block pool {cbp_obj.name} does not exist"
-        )
+    assert verify_block_pool_exists(cbp_obj.name), (
+        f"Block pool {cbp_obj.name} does not exist"
+    )
     return cbp_obj
 
 
@@ -1515,37 +1510,6 @@ def craft_s3_command(mcg_obj, cmd):
     return f"{base_command}{cmd}{string_wrapper}"
 
 
-def craft_s3_api_command(mcg_obj, cmd):
-    """
-    Crafts the AWS cli S3 API level commands
-
-    Args:
-        mcg_obj: An MCG object containing the MCG S3 connection credentials
-        cmd: The AWSCLI API command to run
-
-    Returns:
-        str: The crafted command, ready to be executed on the pod
-
-    """
-    if mcg_obj:
-        base_command = (
-            f"sh -c \"AWS_ACCESS_KEY_ID={mcg_obj.access_key_id} "
-            f"AWS_SECRET_ACCESS_KEY={mcg_obj.access_key} "
-            f"AWS_DEFAULT_REGION={mcg_obj.region} "
-            f"aws s3api "
-            f"--endpoint={mcg_obj.s3_endpoint} "
-            f"--no-verify-ssl "
-        )
-        string_wrapper = "\""
-    else:
-        base_command = (
-            f"aws s3api --no-verify-ssl --no-sign-request "
-        )
-        string_wrapper = ''
-
-    return f"{base_command}{cmd}{string_wrapper}"
-
-
 def wait_for_resource_count_change(
     func_to_use, previous_num, namespace, change_type='increase',
     min_difference=1, timeout=20, interval=2, **func_kwargs
@@ -2101,3 +2065,241 @@ def modify_osd_replica_count(resource_name, replica_count):
     params = f'{{"spec": {{"replicas": {replica_count}}}}}'
     resource_name = '-'.join(resource_name.split('-')[0:4])
     return ocp_obj.patch(resource_name=resource_name, params=params)
+
+
+def add_required_osd_count(total_osd_nos=3):
+    """
+    Function to add required OSD count and if count is less than expected
+
+    Args:
+        total_osd_nos (int): OSD count per node.
+
+    Returns:
+        cluster_total_osd_count (int): Total OSD count of overall cluster.
+
+    """
+    # Make sure setup has required number of OSDs
+    actual_osd_count = cluster.count_cluster_osd()
+    ocs_nodes = node.get_typed_nodes(node_type='worker')
+    expected_osd_count = len(ocs_nodes) * total_osd_nos
+    if actual_osd_count == expected_osd_count:
+        logging.info(f"Setup has OSD count as per OCS workers")
+    else:
+        osd_size = storage_cluster.get_osd_size()
+        calc = (expected_osd_count - actual_osd_count) / len(ocs_nodes)
+        storage_cluster.add_capacity(osd_size * calc)
+        logging.info(f"Now setup has expected osd count {expected_osd_count}")
+    return cluster.count_cluster_osd()
+
+
+def add_worker_based_on_cpu_utilization(
+    machineset_name, node_count, expected_percent, role_type
+):
+    """
+    Function to evaluate CPU utilization of nodes and add node if required.
+
+    Args:
+        machineset_name (str): Machineset_name to add more nodes if required.
+        node_count (int): Additional nodes to be added
+        expected_percent (int): Expected utilization precent
+        role_type (str): To add type to the nodes getting added
+
+    Returns:
+        bool: True if Nodes gets added, else false.
+
+    """
+    # Check for CPU utilization on each nodes
+    app_nodes = node.get_typed_nodes(node_type=role_type)
+    uti_dict = node.get_node_resource_utilization_from_oc_describe(node_type=role_type)
+    uti_high_nodes, uti_less_nodes = ([] for i in range(2))
+    for node_obj in app_nodes:
+        utilization_percent = uti_dict[f"{node_obj.name}"]['cpu']
+        if utilization_percent > expected_percent:
+            uti_high_nodes.append(node_obj.name)
+        else:
+            uti_less_nodes.append(node_obj.name)
+    if len(uti_less_nodes) < 1:
+        count = machine.get_replica_count(machine_set=machineset_name)
+        machine.add_node(machine_set=machineset_name, count=(count + node_count))
+        machine.wait_for_new_node_to_be_ready(machineset_name)
+        return True
+    else:
+        logging.info("Enough resource available for more pod creation")
+        return False
+
+
+def suggest_io_size_based_on_cls_usage(custom_size_dict=None):
+    """
+    Function to check cls capacity suggest IO write to cluster
+
+    Args:
+        custom_size_dict (dict): Dictionary of size param to be used during IO run.
+            eg: size_dict = {'usage_below_60': '2G', 'usage_60_70': '512M',
+            'usage_70_80': '10M', 'usage_80_85': '512K', 'usage_above_85': '10K'}
+        WARN: Make sure dict key is same as above example.
+
+    Returns:
+        size (str): IO size to be considered for cluster env
+
+    """
+    osd_dict = cluster.get_osd_utilization()
+    if custom_size_dict:
+        size_dict = custom_size_dict
+    else:
+        size_dict = {
+            'usage_below_60': '2G', 'usage_60_70': '512M', 'usage_70_80': '10M',
+            'usage_80_85': '512K', 'usage_above_85': '10K'
+        }
+    temp = 0
+    for k, v in osd_dict.items():
+        if temp <= v:
+            temp = v
+    if temp <= 60:
+        size = size_dict['usage_below_60']
+    elif 60 < temp <= 70:
+        size = size_dict['usage_60_70']
+    elif 70 < temp <= 80:
+        size = size_dict['usage_70_80']
+    elif 80 < temp <= 85:
+        size = size_dict['usage_80_85']
+    else:
+        size = size_dict['usage_above_85']
+        logging.warn(f"One of the OSD is near full {temp}% utilized")
+    return size
+
+
+def suggest_fio_rate_based_on_cls_iops(custom_iops_dict=None, osd_size=2048):
+    """
+    Function to check ceph cluster iops and suggest rate param for fio.
+
+    Args:
+        custom_iops_dict (dict): Dictionary of rate param to be used during IO run.
+            eg: iops_dict = {'usage_below_40%': '16k', 'usage_40%_60%': '8k',
+            'usage_60%_80%': '4k', 'usage_80%_95%': '2K'}
+        WARN: Make sure dict key is same as above example.
+        osd_size (int): Size of the OSD in GB
+
+    Returns:
+        rate_param (str): Rate parm for fio based on ceph cluster IOPs
+
+    """
+    # Check for IOPs limit percentage of cluster and accordingly suggest fio rate param
+    cls_obj = cluster.CephCluster()
+    iops = cls_obj.get_iops_percentage(osd_size=osd_size)
+    if custom_iops_dict:
+        iops_dict = custom_iops_dict
+    else:
+        iops_dict = {
+            'usage_below_40%': '16k', 'usage_40%_60%': '8k',
+            'usage_60%_80%': '4k', 'usage_80%_95%': '2K'
+        }
+    if (iops * 100) <= 40:
+        rate_param = iops_dict['usage_below_40%']
+    elif 40 < (iops * 100) <= 60:
+        rate_param = iops_dict['usage_40%_60%']
+    elif 60 < (iops * 100) <= 80:
+        rate_param = iops_dict['usage_60%_80%']
+    elif 80 < (iops * 100) <= 95:
+        rate_param = iops_dict['usage_80%_95%']
+    else:
+        logging.warn(f"Cluster iops utilization is more than {iops * 100} percent")
+        raise UnavailableResourceException("Overall Cluster utilization is more than 95%")
+    return rate_param
+
+
+def create_multi_pvc_pod(
+    namespace, rbd_sc_obj, cephfs_sc_obj, pvc_pod_count=5, pvc_size=f"{random.randrange(5, 105, 5)}Gi",
+    pod_dict_path=None, sa_name=None, dc_deployment=False, fio_rate=None, start_io=False,
+    fio_size='1G', fio_runtime=60, node_selector=None
+):
+    """
+    Function to create PVC of different type and attach them to PODs and start IO.
+
+    Args:
+        namespace (str): The namespace for creating pod
+        rbd_sc_obj (obj_dict): rbd storageclass object
+        cephfs_sc_obj (obj_dict): cephfs storageclass object
+        pvc_pod_count (int): Number of PVC-POD to be created per PVC type
+            eg: If 2 then 8 PVC+POD will be created with 2 each of 4 PVC types
+        pvc_size (str): PVC size to be created
+        pod_dict_path (str): pod_dict_path for yaml
+        sa_name (str): sa_name for providing permission
+        dc_deployment (bool): Either DC deployment or not
+        fio_rate (str): fio rate param for IO execution
+        start_io (bool): True to start IO and else False
+        fio_size (str): fio size param for IO execution
+        fio_runtime (int): fio runtime param for IO execution
+        node_selector (dict): dict of key-value pair to be used for nodeSelector field
+            eg: {'nodetype': 'app-pod'}
+
+    Returns:
+        all_pod_obj (obj): Objs of all the PODs created
+        all_pvc_obj (obj): Objs of all the PVCs created
+
+    """
+    logging.info(f"Create {pvc_pod_count} PVCs and PODs")
+    cephfs_pvcs = create_multiple_pvc_parallel(
+        cephfs_sc_obj, namespace, pvc_pod_count, pvc_size,
+        access_modes=[constants.ACCESS_MODE_RWO, constants.ACCESS_MODE_RWX]
+    )
+    rbd_pvcs = create_multiple_pvc_parallel(
+        rbd_sc_obj, namespace, pvc_pod_count, pvc_size,
+        access_modes=[constants.ACCESS_MODE_RWO, constants.ACCESS_MODE_RWX]
+    )
+    # Appending all the pvc_obj and pod_obj to list
+    all_pvc_obj, all_pod_obj = ([] for i in range(2))
+    all_pvc_obj.extend(cephfs_pvcs + rbd_pvcs)
+
+    # Create pods with above pvc list
+    cephfs_pods = create_pods_parallel(
+        cephfs_pvcs, namespace, constants.CEPHFS_INTERFACE,
+        pod_dict_path=pod_dict_path, sa_name=sa_name, dc_deployment=dc_deployment,
+        node_selector=node_selector
+    )
+    rbd_rwo_pvc, rbd_rwx_pvc = ([] for i in range(2))
+    for pvc_obj in rbd_pvcs:
+        if pvc_obj.get_pvc_access_mode == constants.ACCESS_MODE_RWX:
+            rbd_rwx_pvc.append(pvc_obj)
+        else:
+            rbd_rwo_pvc.append(pvc_obj)
+    rbd_rwo_pods = create_pods_parallel(
+        rbd_rwo_pvc, namespace, constants.CEPHBLOCKPOOL,
+        pod_dict_path=pod_dict_path, sa_name=sa_name, dc_deployment=dc_deployment,
+        node_selector=node_selector
+    )
+    rbd_rwx_pods = create_pods_parallel(
+        rbd_rwx_pvc, namespace, constants.CEPHBLOCKPOOL,
+        pod_dict_path=pod_dict_path, sa_name=sa_name, dc_deployment=dc_deployment,
+        raw_block_pv=True, node_selector=node_selector
+    )
+    temp_pod_objs = list()
+    temp_pod_objs.extend(cephfs_pods + rbd_rwo_pods)
+
+    # Appending all the pod_obj to list
+    all_pod_obj.extend(temp_pod_objs + rbd_rwx_pods)
+
+    # Start IO
+    if start_io:
+        threads = list()
+        for pod_obj in temp_pod_objs:
+            process = threading.Thread(
+                target=pod_obj.run_io, kwargs={
+                    'storage_type': 'fs', 'size': fio_size,
+                    'runtime': fio_runtime, 'rate': fio_rate
+                }
+            )
+            process.start()
+            threads.append(process)
+        for pod_obj in rbd_rwx_pods:
+            process = threading.Thread(
+                target=pod_obj.run_io, kwargs={
+                    'storage_type': 'block', 'size': fio_size,
+                    'runtime': fio_runtime, 'rate': fio_rate
+                }
+            )
+            process.start()
+            threads.append(process)
+        for process in threads:
+            process.join()
+
+    return all_pod_obj, all_pvc_obj
