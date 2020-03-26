@@ -234,8 +234,6 @@ def create_project():
     namespace = create_unique_resource_name('test', 'namespace')
     project_obj = ocp.OCP(kind='Project', namespace=namespace)
     assert project_obj.new_project(namespace), f"Failed to create namespace {namespace}"
-    import pdb
-    pdb.set_trace()
     return project_obj
 
 
