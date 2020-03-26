@@ -26,9 +26,9 @@ log = logging.getLogger(__name__)
 @pytest.mark.parametrize(
     argnames="start_io",
     argvalues=[
-        pytest.param(
-            *[False], marks=pytest.mark.polarion_id("OCS-1357")
-        ),
+        # pytest.param(
+        #     *[False], marks=pytest.mark.polarion_id("OCS-1357")
+        # ),
         pytest.param(
             *[True], marks=pytest.mark.polarion_id("OCS-1357")
         )
@@ -61,8 +61,8 @@ class TestMultiProjectScalePVCPOD(E2ETest):
         cephfs_sc_obj = helpers.default_storage_class(constants.CEPHFILESYSTEM)
         pvc_count_each_itr = 5
         size = f"{random.randrange(5, 105, 5)}Gi"
-        fio_size_param = '2G'
-        fio_rate_param = '16k'
+        fio_size_param = '128M'
+        fio_rate_param = '8k'
         self.namespace_list, all_pod_obj = ([] for i in range(2))
 
         # Pre-requisite check for number of OSD's and app worker nodes.
@@ -86,7 +86,7 @@ class TestMultiProjectScalePVCPOD(E2ETest):
                 pod_obj, pvc_obj = helpers.create_multi_pvc_pod(
                     self.namespace_list[-1].name, rbd_sc_obj, cephfs_sc_obj, pvc_count_each_itr,
                     size, fio_rate=fio_rate_param, start_io=start_io, fio_size=fio_size_param,
-                    fio_runtime=3600, node_selector=constants.SCALE_NODE_SELECTOR
+                    fio_runtime=360000, node_selector=constants.SCALE_NODE_SELECTOR
                 )
                 all_pod_obj.extend(pod_obj)
                 try:
