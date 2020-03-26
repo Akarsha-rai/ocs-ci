@@ -91,13 +91,13 @@ class TestMultiProjectScalePVCPOD(E2ETest):
                 all_pod_obj.extend(pod_obj)
                 try:
                     # Check enough resources available in the dedicated app workers
-                    if helpers.add_worker_based_on_cpu_utilization(
-                        machineset_name=self.ms_name, node_count=1, expected_percent=75,
-                        role_type='app,worker'
-                    ):
-                        logging.info(f"Nodes added for app pod creation")
-                    else:
-                        logging.info(f"Existing resource are enough to create more pods")
+                    # if helpers.add_worker_based_on_cpu_utilization(
+                    #     machineset_name=self.ms_name, node_count=1, expected_percent=75,
+                    #     role_type='app,worker'
+                    # ):
+                    #     logging.info(f"Nodes added for app pod creation")
+                    # else:
+                    #     logging.info(f"Existing resource are enough to create more pods")
 
                     # # Check for ceph cluster OSD utilization
                     # if not cluster.validate_osd_utilization(osd_used=80):
