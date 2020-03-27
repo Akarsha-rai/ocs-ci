@@ -76,6 +76,7 @@ class TestMultiProjectScalePVCPOD(E2ETest):
 
         # Create namespace
         self.namespace_list.append(helpers.create_project())
+        namespace = (self.namespace_list[-1]).namespace
 
         # Continue to iterate till the scale pvc limit is reached
         while True:
@@ -83,10 +84,11 @@ class TestMultiProjectScalePVCPOD(E2ETest):
                 log.info(f"Scaled {scale_count} pvc and pods")
                 break
             else:
+                sa_name = helpers.create_serviceaccount(namespace)
                 log.info(f"Create {pvc_count_each_itr} pods & pvc")
                 pod_obj, pvc_obj = helpers.create_multi_pvc_pod(
                     (self.namespace_list[-1]).namespace, rbd_sc_obj, cephfs_sc_obj, pvc_count_each_itr,
-                    size, dc_deployment=True, fio_rate=fio_rate_param, start_io=start_io, fio_size=fio_size_param,
+                    size, sa_name.name, dc_deployment=True, fio_rate=fio_rate_param, start_io=start_io, fio_size=fio_size_param,
                     fio_runtime=360000, node_selector=constants.SCALE_NODE_SELECTOR
                 )
                 all_pod_obj.extend(pod_obj)
