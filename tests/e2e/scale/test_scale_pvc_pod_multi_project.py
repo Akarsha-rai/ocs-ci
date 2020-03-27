@@ -72,7 +72,7 @@ class TestMultiProjectScalePVCPOD(E2ETest):
         # self.ms_name = machine.create_custom_machineset(instance_type='m5.4xlarge', zone='a')
         # machine.wait_for_new_node_to_be_ready(self.ms_name)
         # self.app_worker_nodes = machine.get_machine_from_machineset(self.ms_name)
-        self.ms_name = 'akrai-upgrade-ocp-kgxfs-app-us-east-2a'
+        self.ms_name = 'akrai-upgrade-ocs-psgqh-app-us-east-2a'
 
         # Create namespace
         self.namespace_list.append(helpers.create_project())
