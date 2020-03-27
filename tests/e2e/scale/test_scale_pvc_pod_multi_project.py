@@ -69,9 +69,10 @@ class TestMultiProjectScalePVCPOD(E2ETest):
         helpers.add_required_osd_count(total_osd_nos=3)
 
         # Create machineset for app worker nodes, which will create one app worker node
-        self.ms_name = machine.create_custom_machineset(instance_type='m5.4xlarge', zone='a')
-        machine.wait_for_new_node_to_be_ready(self.ms_name)
-        self.app_worker_nodes = machine.get_machine_from_machineset(self.ms_name)
+        # self.ms_name = machine.create_custom_machineset(instance_type='m5.4xlarge', zone='a')
+        # machine.wait_for_new_node_to_be_ready(self.ms_name)
+        # self.app_worker_nodes = machine.get_machine_from_machineset(self.ms_name)
+        self.ms_name = 'akrai-upgrade-ocs-7t4tf-app-us-east-2a'
 
         # Create namespace
         self.namespace_list.append(helpers.create_project())
