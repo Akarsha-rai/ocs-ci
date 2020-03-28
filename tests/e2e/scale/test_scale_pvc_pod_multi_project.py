@@ -83,12 +83,12 @@ class TestMultiProjectScalePVCPOD(E2ETest):
                 log.info(f"Scaled {scale_count} pvc and pods")
                 break
             else:
-                # namespace = (self.namespace_list[-1]).namespace
-                # sa_name = helpers.create_serviceaccount(namespace)
+                namespace = (self.namespace_list[-1]).namespace
+                sa_name = helpers.create_serviceaccount(namespace)
                 log.info(f"Create {pvc_count_each_itr} pods & pvc")
                 pod_obj, pvc_obj = helpers.create_multi_pvc_pod(
-                    (self.namespace_list[-1]).namespace, rbd_sc_obj, cephfs_sc_obj, pvc_count_each_itr,
-                    size, pod_dict_path=constants.FEDORA_DC_YAML,
+                    sa_name.namespace, rbd_sc_obj, cephfs_sc_obj, pvc_count_each_itr,
+                    size, pod_dict_path=constants.FEDORA_DC_YAML, sa_name=sa_name.name,
                     dc_deployment=True, fio_rate=fio_rate_param, start_io=start_io, fio_size=fio_size_param,
                     fio_runtime=360000, node_selector=constants.SCALE_NODE_SELECTOR
                 )
