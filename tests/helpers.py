@@ -2279,24 +2279,24 @@ def create_multi_pvc_pod(
 
     """
     logging.info(f"Create {pvc_pod_count} PVCs and PODs")
-    cephfs_pvcs = create_multiple_pvc_parallel(
-        cephfs_sc_obj, namespace, pvc_pod_count, pvc_size,
-        access_modes=[constants.ACCESS_MODE_RWO, constants.ACCESS_MODE_RWX]
-    )
+    # cephfs_pvcs = create_multiple_pvc_parallel(
+    #     cephfs_sc_obj, namespace, pvc_pod_count, pvc_size,
+    #     access_modes=[constants.ACCESS_MODE_RWO, constants.ACCESS_MODE_RWX]
+    # )
     rbd_pvcs = create_multiple_pvc_parallel(
         rbd_sc_obj, namespace, pvc_pod_count, pvc_size,
         access_modes=[constants.ACCESS_MODE_RWO, constants.ACCESS_MODE_RWX]
     )
     # Appending all the pvc_obj and pod_obj to list
     all_pvc_obj, all_pod_obj = ([] for i in range(2))
-    all_pvc_obj.extend(cephfs_pvcs + rbd_pvcs)
+    all_pvc_obj.extend(rbd_pvcs)
 
     # Create pods with above pvc list
-    cephfs_pods = create_pods_parallel(
-        cephfs_pvcs, namespace, constants.CEPHFS_INTERFACE,
-        pod_dict_path=pod_dict_path, sa_name=sa_name, dc_deployment=dc_deployment,
-        node_selector=node_selector
-    )
+    # cephfs_pods = create_pods_parallel(
+    #     cephfs_pvcs, namespace, constants.CEPHFS_INTERFACE,
+    #     pod_dict_path=pod_dict_path, sa_name=sa_name, dc_deployment=dc_deployment,
+    #     node_selector=node_selector
+    # )
     rbd_rwo_pvc, rbd_rwx_pvc = ([] for i in range(2))
     for pvc_obj in rbd_pvcs:
         if pvc_obj.get_pvc_access_mode == constants.ACCESS_MODE_RWX:
@@ -2314,7 +2314,7 @@ def create_multi_pvc_pod(
         raw_block_pv=True, node_selector=node_selector
     )
     temp_pod_objs = list()
-    temp_pod_objs.extend(cephfs_pods + rbd_rwo_pods)
+    temp_pod_objs.extend(rbd_rwo_pods)
 
     # Appending all the pod_obj to list
     all_pod_obj.extend(temp_pod_objs + rbd_rwx_pods)
