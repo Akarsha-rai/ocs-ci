@@ -11,7 +11,11 @@ from ocs_ci.framework.testlib import (
     skipif_external_mode,
     skipif_bm,
 )
-from ocs_ci.ocs.node import get_worker_nodes, delete_and_create_osd_node
+from ocs_ci.ocs.node import (
+    get_worker_nodes,
+    delete_and_create_osd_node,
+    wait_for_nodes_status,
+)
 from ocs_ci.ocs.cluster import CephCluster
 from ocs_ci.ocs.resources.pod import wait_for_storage_pods, run_io_in_bg
 from ocs_ci.ocs.resources.storage_cluster import osd_encryption_verification
@@ -73,8 +77,14 @@ class TestRollingNodeReplacement(E2ETest):
                 # Replace node
                 log.info(f"Replacing node {node_to_replace}")
                 delete_and_create_osd_node(
-                    osd_node_name=node_to_replace, validations=False
+                    osd_node_name=node_to_replace, validations=True
                 )
+
+                # Validate all Nodes are in Ready state
+                wait_for_nodes_status()
+
+                # New node list
+                log.info(f"New node list are: {get_worker_nodes()}")
 
                 # Verify OSD is encrypted
                 if config.ENV_DATA.get("encryption_at_rest"):
@@ -88,9 +98,6 @@ class TestRollingNodeReplacement(E2ETest):
                 log.info("Verifying All resources are Running and cluster is health OK")
                 ceph_health_check(tries=120, delay=15)
                 wait_for_storage_pods(timeout=1200)
-
-                # New node list
-                log.info(f"New node list are: {get_worker_nodes()}")
 
             # Next iteration
             log.info("Wait for 10 mins before starting next iteration")
