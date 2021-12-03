@@ -405,7 +405,7 @@ class TestMonitoringBackedByOCS(E2ETest):
             )
 
     @pytest.mark.polarion_id("OCS-709")
-    @pytest.skip("Skip the master nodes reboot")
+    @pytest.mark.skip("Skip the master nodes reboot")
     def test_monitoring_after_rebooting_master_node(self, nodes, pods):
         """
         Test case to validate rebooting master node shouldn't delete
