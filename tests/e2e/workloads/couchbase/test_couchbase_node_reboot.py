@@ -43,7 +43,7 @@ class TestCouchBaseNodeReboot(E2ETest):
         argnames=["pod_name_of_node"],
         argvalues=[
             pytest.param(*["osd"], marks=pytest.mark.polarion_id("OCS-776")),
-            pytest.param(*["master"], marks=pytest.mark.polarion_id("OCS-783")),
+            # pytest.param(*["master"], marks=pytest.mark.polarion_id("OCS-783")),
             pytest.param(*["couchbase"], marks=pytest.mark.polarion_id("OCS-776")),
         ],
     )

@@ -4,7 +4,7 @@ import pytest
 from ocs_ci.framework.pytest_customization.marks import skipif_vsphere_ipi
 from ocs_ci.framework.testlib import E2ETest, workloads, ignore_leftovers
 from ocs_ci.helpers.sanity_helpers import Sanity
-from ocs_ci.ocs.constants import STATUS_COMPLETED, MASTER_MACHINE, WORKER_MACHINE
+from ocs_ci.ocs.constants import STATUS_COMPLETED, WORKER_MACHINE
 from ocs_ci.ocs.jenkins import Jenkins
 from ocs_ci.ocs.node import get_node_objs
 
@@ -47,9 +47,9 @@ class TestJenkinsNodeReboot(E2ETest):
     @pytest.mark.parametrize(
         argnames=["node_type", "num_projects", "num_of_builds"],
         argvalues=[
-            pytest.param(
-                *[MASTER_MACHINE, 2, 15], marks=pytest.mark.polarion_id("OCS-2202")
-            ),
+            # pytest.param(
+            #     *[MASTER_MACHINE, 2, 15], marks=pytest.mark.polarion_id("OCS-2202")
+            # ),
             pytest.param(
                 *[WORKER_MACHINE, 2, 15], marks=pytest.mark.polarion_id("OCS-2178")
             ),

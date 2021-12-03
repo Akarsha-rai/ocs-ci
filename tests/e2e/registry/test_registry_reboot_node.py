@@ -104,7 +104,7 @@ class TestRegistryRebootNode(E2ETest):
     @pytest.mark.parametrize(
         argnames=["node_type"],
         argvalues=[
-            pytest.param(*[MASTER_MACHINE], marks=pytest.mark.polarion_id("OCS-1802")),
+            # pytest.param(*[MASTER_MACHINE], marks=pytest.mark.polarion_id("OCS-1802")),
             pytest.param(*[WORKER_MACHINE], marks=pytest.mark.polarion_id("OCS-1804")),
         ],
     )

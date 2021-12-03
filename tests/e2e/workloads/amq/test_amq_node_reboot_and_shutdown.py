@@ -78,7 +78,7 @@ class TestAMQNodeReboot(E2ETest):
         argnames=["node_type"],
         argvalues=[
             pytest.param(*["worker"], marks=pytest.mark.polarion_id("OCS-1282")),
-            pytest.param(*["master"], marks=pytest.mark.polarion_id("OCS-1281")),
+            # pytest.param(*["master"], marks=pytest.mark.polarion_id("OCS-1281")),
         ],
     )
     def test_amq_after_rebooting_node(self, node_type, nodes, amq_setup):
