@@ -17,7 +17,7 @@ from ocs_ci.ocs.resources.packagemanifest import PackageManifest
 from ocs_ci.ocs.constants import (
     CNV_NAMESPACE_YAML,
     CNV_OPERATORGROUP_YAML,
-    CNV_SUBSCRIPTION_YAML,
+    # CNV_SUBSCRIPTION_YAML,
     CNV_CATALOG_SOURCE_YAML,
     CNV_HYPERCONVERGED_YAML,
 )
@@ -112,26 +112,26 @@ class CNVInstaller(object):
         Creates subscription for CNV operator
 
         """
-        # Create an operator group for CNV
-        logger.info("Creating OperatorGroup for CNV")
-        self.create_cnv_operatorgroup()
-        cnv_subscription_yaml_data = templating.load_yaml(CNV_SUBSCRIPTION_YAML)
-        cnv_channel_version = config.DEPLOYMENT.get("ocs_csv_channel")[-4:]
-        cnv_sub_channel = f"nightly-{cnv_channel_version}"
-        cnv_subscription_yaml_data["spec"]["channel"] = f"{cnv_sub_channel}"
-        cnv_subscription_manifest = tempfile.NamedTemporaryFile(
-            mode="w+", prefix="cnv_subscription_manifest", delete=False
-        )
-        templating.dump_data_to_temp_yaml(
-            cnv_subscription_yaml_data, cnv_subscription_manifest.name
-        )
-        logger.info("Creating subscription for CNV operator")
-        run_cmd(f"oc create -f {cnv_subscription_manifest.name}")
-        self.wait_for_the_resource_to_discover(
-            kind=constants.SUBSCRIPTION,
-            namespace=self.namespace,
-            resource_name=constants.KUBEVIRT_HYPERCONVERGED,
-        )
+        # # Create an operator group for CNV
+        # logger.info("Creating OperatorGroup for CNV")
+        # self.create_cnv_operatorgroup()
+        # cnv_subscription_yaml_data = templating.load_yaml(CNV_SUBSCRIPTION_YAML)
+        # cnv_channel_version = config.DEPLOYMENT.get("ocs_csv_channel")[-4:]
+        # cnv_sub_channel = f"nightly-{cnv_channel_version}"
+        # cnv_subscription_yaml_data["spec"]["channel"] = f"{cnv_sub_channel}"
+        # cnv_subscription_manifest = tempfile.NamedTemporaryFile(
+        #     mode="w+", prefix="cnv_subscription_manifest", delete=False
+        # )
+        # templating.dump_data_to_temp_yaml(
+        #     cnv_subscription_yaml_data, cnv_subscription_manifest.name
+        # )
+        # logger.info("Creating subscription for CNV operator")
+        # run_cmd(f"oc create -f {cnv_subscription_manifest.name}")
+        # self.wait_for_the_resource_to_discover(
+        #     kind=constants.SUBSCRIPTION,
+        #     namespace=self.namespace,
+        #     resource_name=constants.KUBEVIRT_HYPERCONVERGED,
+        # )
         wait_for_install_plan_and_approve(self.namespace)
         cnv_package_manifest = PackageManifest(
             resource_name=constants.KUBEVIRT_HYPERCONVERGED,
@@ -497,11 +497,11 @@ class CNVInstaller(object):
         Installs CNV enabling software emulation.
 
         """
-        logger.info("Installing CNV")
-        # Create CNV catalog source
-        self.create_cnv_catalog_source()
-        # Create openshift-cnv namespace
-        self.create_cnv_namespace()
+        # logger.info("Installing CNV")
+        # # Create CNV catalog source
+        # self.create_cnv_catalog_source()
+        # # Create openshift-cnv namespace
+        # self.create_cnv_namespace()
         # create CNV subscription
         self.create_cnv_subscription()
         # Deploy the HyperConverged CR
