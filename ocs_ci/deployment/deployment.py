@@ -1682,23 +1682,23 @@ class Deployment(object):
                 run_cmd(f"oc create -f {constants.OLM_YAML}")
             if not live_deployment:
                 create_catalog_source()
-            self.subscribe_ocs()
-            operator_selector = get_selector_for_ocs_operator()
-            subscription_plan_approval = config.DEPLOYMENT.get(
-                "subscription_plan_approval"
-            )
-            ocs_operator_names = get_required_csvs()
-            channel = config.DEPLOYMENT.get("ocs_csv_channel")
-            for ocs_operator_name in ocs_operator_names:
-                package_manifest = PackageManifest(
-                    resource_name=ocs_operator_name,
-                    selector=operator_selector,
-                    subscription_plan_approval=subscription_plan_approval,
-                )
-                package_manifest.wait_for_resource(timeout=300)
-                csv_name = package_manifest.get_current_csv(channel=channel)
-                csv = CSV(resource_name=csv_name, namespace=self.namespace)
-                csv.wait_for_phase("Succeeded", timeout=720)
+        #     self.subscribe_ocs()
+        #     operator_selector = get_selector_for_ocs_operator()
+        #     subscription_plan_approval = config.DEPLOYMENT.get(
+        #         "subscription_plan_approval"
+        #     )
+        #     ocs_operator_names = get_required_csvs()
+        #     channel = config.DEPLOYMENT.get("ocs_csv_channel")
+        #     for ocs_operator_name in ocs_operator_names:
+        #         package_manifest = PackageManifest(
+        #             resource_name=ocs_operator_name,
+        #             selector=operator_selector,
+        #             subscription_plan_approval=subscription_plan_approval,
+        #         )
+        #         package_manifest.wait_for_resource(timeout=300)
+        #         csv_name = package_manifest.get_current_csv(channel=channel)
+        #         csv = CSV(resource_name=csv_name, namespace=self.namespace)
+        #         csv.wait_for_phase("Succeeded", timeout=720)
         # Set rook log level
         self.set_rook_log_level()
 
