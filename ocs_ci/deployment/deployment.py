@@ -663,7 +663,7 @@ class Deployment(object):
             self.deploy_acm_hub()
         self.do_deploy_lvmo()
         self.do_deploy_submariner()
-        self.do_gitops_deploy()
+        # self.do_gitops_deploy()
         self.do_deploy_ocs()
         self.do_deploy_oadp()
         self.do_deploy_rdr()
