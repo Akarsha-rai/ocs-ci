@@ -1673,15 +1673,15 @@ class Deployment(object):
 
         """
 
-        if not config.DEPLOYMENT.get("multi_storagecluster"):
-            live_deployment = config.DEPLOYMENT.get("live_deployment")
-            logger.info("Deploying OCS with external mode RHCS")
-            ui_deployment = config.DEPLOYMENT.get("ui_deployment")
-            if not ui_deployment:
-                logger.info("Creating namespace and operator group.")
-                run_cmd(f"oc create -f {constants.OLM_YAML}")
-            if not live_deployment:
-                create_catalog_source()
+        # if not config.DEPLOYMENT.get("multi_storagecluster"):
+        #     live_deployment = config.DEPLOYMENT.get("live_deployment")
+        #     logger.info("Deploying OCS with external mode RHCS")
+        #     ui_deployment = config.DEPLOYMENT.get("ui_deployment")
+        # if not ui_deployment:
+        #     logger.info("Creating namespace and operator group.")
+        #     run_cmd(f"oc create -f {constants.OLM_YAML}")
+        # if not live_deployment:
+        #     create_catalog_source()
         #     self.subscribe_ocs()
         #     operator_selector = get_selector_for_ocs_operator()
         #     subscription_plan_approval = config.DEPLOYMENT.get(
