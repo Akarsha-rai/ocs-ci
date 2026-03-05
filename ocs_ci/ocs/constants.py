@@ -1602,17 +1602,6 @@ ALERT_OBC_QUOTA_BYTES_ALERT = "ObcQuotaBytesAlert"
 ALERT_MDSCACHEUSAGEHIGH = "MDSCacheUsageHigh"
 ALERT_MDSCPUUSAGEHIGH = "MDSCPUUsageHigh"
 ALERT_ODFOPERATORNOTUPGRADABLE = "ODFOperatorNotUpgradeable"
-RUNBOOK_URL_ODFOPERATORNOTUPGRADABLE = (
-    "https://github.com/openshift/runbooks/blob/master/alerts/"
-    "openshift-container-storage-operator/ODFOperatorNotUpgradeable.md"
-)
-# ODF 4.21 new alerts
-ALERT_ODF_CORE_POD_RESTART = "ODFCorePodRestarted"
-ALERT_ODF_DISK_UTILIZATION_HIGH = "ODFDiskUtilizationHigh"
-ALERT_ODF_NODE_LATENCY_HIGH_OSD_NODES = "ODFNodeLatencyHighOnOSDNodes"
-ALERT_ODF_NODE_LATENCY_HIGH_NON_OSD_NODES = "ODFNodeLatencyHighOnNonOSDNodes"
-ALERT_ODF_NODE_NIC_BANDWIDTH_SATURATION = "ODFNodeNICBandwidthSaturation"
-ALERT_ODF_NODE_MTU_LESS_THAN_9000 = "ODFNodeMTULessThan9000"
 
 # OCS Deployment related constants
 OPERATOR_NODE_LABEL = "cluster.ocs.openshift.io/openshift-storage=''"

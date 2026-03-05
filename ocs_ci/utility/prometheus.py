@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import re
 import requests
 import tempfile
 import time
@@ -88,6 +89,105 @@ def check_alert_list(
             ), assert_msg
 
     logger.info("Alerts were triggered correctly during utilization")
+
+
+# Patterns that indicate unrendered template/code in alert description
+ALERT_DESCRIPTION_CODE_PATTERNS = (
+    "{{",  # Prometheus/Go template
+    "$value",
+    "$labels",
+    "$externalLabels",
+    ".Labels",
+    ".Value",
+)
+
+
+def alert_description_has_no_code_and_has_valid_value(description):
+    """
+
+    Verify alert description does not contain template/code and contains
+    a valid human-readable value (e.g. number, percentage, node name).
+
+    Args:
+        description (str): Alert annotation description.
+
+    Returns:
+        tuple: (bool, str) - (True if valid, error message if invalid).
+
+    """
+    if not description or not isinstance(description, str):
+        return False, "Description is empty or not a string"
+    desc = description.strip()
+    if not desc:
+        return False, "Description is empty"
+    for pattern in ALERT_DESCRIPTION_CODE_PATTERNS:
+        if pattern in desc:
+            return False, f"Description contains template/code: {pattern!r}"
+    # Valid value: at least a number (e.g. utilization %) or non-empty text
+    if re.search(r"\d+", desc):
+        return True, ""
+    if len(desc) >= 2 and not desc.startswith("{{"):
+        return True, ""
+    return False, "Description does not contain a valid value (e.g. number)"
+
+
+def get_firing_alert_description(
+    api, alert_name, state="firing", timeout=600, sleep=10
+):
+    """
+
+    Wait for an alert to be in the given state and return its description.
+
+    Args:
+        api (PrometheusAPI): PrometheusAPI instance.
+        alert_name (str): Alert label (e.g. ODFDiskUtilizationHigh).
+        state (str): Alert state to wait for.
+        timeout (int): Max seconds to wait.
+        sleep (int): Seconds between checks.
+
+    Returns:
+        str: The description of the first matching alert.
+
+    Raises:
+        AlertingError: If no such alert is found within timeout.
+
+    """
+    alerts = api.wait_for_alert(
+        name=alert_name, state=state, timeout=timeout, sleep=sleep
+    )
+    if not alerts:
+        raise AlertingError(
+            f"Alert {alert_name} with state {state} not found within {timeout}s"
+        )
+    ann = alerts[0].get("annotations") or {}
+    desc = ann.get("description") or ann.get("message") or ""
+    return desc
+
+
+def get_alert_rule_annotations(api, alert_name):
+    """
+    Get annotations (e.g. description) for an alert rule by name from
+    Prometheus /api/v1/rules. Used to verify rule definition after alert
+    is cleared.
+
+    Args:
+        api (PrometheusAPI): PrometheusAPI instance.
+        alert_name (str): Alert name (e.g. ODFDiskUtilizationHigh).
+
+    Returns:
+        dict: Rule annotations if found, else None.
+    """
+    with api._cluster_context():
+        response = api.get("rules", timeout=60)
+    if not response.ok:
+        logger.warning("Prometheus rules request failed: %s", response.text)
+        return None
+    data = response.json().get("data", {})
+    for group in data.get("groups") or []:
+        for rule in group.get("rules") or []:
+            if rule.get("name") == alert_name:
+                return rule.get("annotations") or {}
+    return None
 
 
 def check_query_range_result_viafunction(

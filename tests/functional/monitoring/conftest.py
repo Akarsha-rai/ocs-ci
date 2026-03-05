@@ -539,6 +539,83 @@ def workload_storageutilization_97p_rbd(
 
 
 @pytest.fixture
+def workload_high_disk_io_odf_alert(
+    project,
+    measurement_dir,
+    threading_lock,
+    pvc_factory,
+    pod_factory,
+):
+    """
+    Run sustained high I/O on RBD to trigger ODFDiskUtilizationHigh.
+
+    ODFDiskUtilizationHigh fires when a Ceph OSD disk is >90% busy (iostat %util
+    via node_disk_io_time_seconds_total). This fixture runs FIO with high
+    iodepth and multiple jobs to drive disk utilization, not storage capacity.
+
+    Run multiple pods in parallel with heavy I/O so OSD disk %util exceeds 90%.
+    Alert severity is expected to be "warning".
+    See: https://github.com/openshift/runbooks/blob/master/alerts/
+         openshift-container-storage-operator/ODFDiskUtilizationHigh.md
+    """
+    # Multiple pods + long enough runtime so OSD disk crosses 90% util
+    HIGH_DISK_IO_RUNTIME_SEC = 420  # 7 min
+    HIGH_DISK_IO_JOBS = 32
+    HIGH_DISK_IO_DEPTH = 128
+    HIGH_DISK_IO_NUM_PODS = 3  # parallel pods to multiply load on OSDs
+    HIGH_DISK_IO_RATE = "10G"  # high rate cap per pod
+
+    def run_high_io():
+        pods_doing_io = []
+        for i in range(HIGH_DISK_IO_NUM_PODS):
+            pvc = pvc_factory(
+                interface=constants.CEPHBLOCKPOOL,
+                project=project,
+                size=15,
+                status=constants.STATUS_BOUND,
+            )
+            helpers.wait_for_resource_state(
+                resource=pvc, state=constants.STATUS_BOUND, timeout=300
+            )
+            io_pod = pod_factory(
+                interface=constants.CEPHBLOCKPOOL,
+                pvc=pvc,
+                status=constants.STATUS_RUNNING,
+            )
+            helpers.wait_for_resource_state(
+                resource=io_pod, state=constants.STATUS_RUNNING, timeout=300
+            )
+            # Start heavy random I/O (all pods run in parallel once started)
+            io_pod.run_io(
+                storage_type="fs",
+                size="10G",
+                runtime=HIGH_DISK_IO_RUNTIME_SEC,
+                io_direction="rw",
+                readwrite="randrw",
+                rw_ratio=50,
+                jobs=HIGH_DISK_IO_JOBS,
+                depth=HIGH_DISK_IO_DEPTH,
+                bs="4K",
+                rate=HIGH_DISK_IO_RATE,
+                direct=1,
+            )
+            pods_doing_io.append(io_pod)
+        # Wait for all pods to finish I/O (keeps load on OSDs for full runtime)
+        for io_pod in pods_doing_io:
+            io_pod.get_fio_results()
+        return "high_disk_io_done"
+
+    test_file = os.path.join(measurement_dir, "measure_high_disk_io_odf_alert.json")
+    measured_op = measure_operation(
+        run_high_io,
+        test_file,
+        minimal_time=0,
+        threading_lock=threading_lock,
+    )
+    return measured_op
+
+
+@pytest.fixture
 def workload_storageutilization_05p_cephfs(
     project,
     fio_pvc_dict,
