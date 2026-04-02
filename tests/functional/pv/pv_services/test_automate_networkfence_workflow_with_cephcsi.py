@@ -13,13 +13,18 @@ import pytest
 
 from ocs_ci.framework.testlib import ManageTest, tier4b, green_squad
 from ocs_ci.ocs import constants
+from ocs_ci.ocs.exceptions import UnavailableResourceException
 from ocs_ci.ocs.resources.pod import (
     cal_md5sum,
     get_pod_node,
     get_fio_rw_iops,
     get_all_pods,
+    get_pvc_name,
+    verify_node_name,
 )
 from ocs_ci.ocs.node import (
+    get_node_objs,
+    get_worker_nodes,
     node_network_failure,
     taint_nodes,
     untaint_nodes,
@@ -28,6 +33,24 @@ from ocs_ci.ocs.node import (
 from ocs_ci.helpers.helpers import wait_for_resource_state
 
 logger = logging.getLogger(__name__)
+
+
+def pods_for_test_workload_pvcs(pod_obj_list, wait):
+    """
+    Return pods in the test namespace that use the same PVCs as the given
+    workload pods (filters out pods without a PVC).
+    """
+    target_pvcs = {p.pvc.name for p in pod_obj_list}
+    namespace = pod_obj_list[0].namespace
+    all_pods = get_all_pods(namespace=namespace, wait=wait)
+    matched = []
+    for p in all_pods:
+        try:
+            if get_pvc_name(p) in target_pvcs:
+                matched.append(p)
+        except UnavailableResourceException:
+            continue
+    return matched
 
 
 @green_squad
@@ -85,7 +108,7 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
             pytest.param(False, marks=pytest.mark.polarion_id("OCS-7371")),
         ],
     )
-    def test_automate_networkfence_workflow_with_cephsi(
+    def test_automate_networkfence_workflow_with_cephcsi(
         self,
         node_shutdown,
         nodes,
@@ -97,10 +120,12 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
         Test workload migration with PVCs during a node outage.
 
         Steps:
-        1. Create and verify a workload (deployment type) using a PVC.
+        1. Create and verify workloads (deployment type) using PVCs, both
+           scheduled on the same worker node.
         2. Shut down the node or induce network failure; apply "out-of-service"
            taint and verify node NotReady.
-        3. Confirm workload moved to another node and is accessible.
+        3. Confirm each workload moved to a node different from the one it
+           used before the outage, and data is accessible.
         4. Bring node online and verify Ready state.
         5. Remove the taint.
         6. Verify new files can be written to the PVC on the new node.
@@ -109,10 +134,35 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
         """
         pod_obj_list = []
         try:
-            # Create and verify a workload (deployment type) using a PVC
+            worker_node_names = get_worker_nodes()
+            if len(worker_node_names) < 2:
+                pytest.skip(
+                    "At least two worker nodes are required so workloads can "
+                    "migrate when one node is unavailable"
+                )
+            target_node_name = worker_node_names[0]
+            outage_node = get_node_objs(node_names=[target_node_name])[0]
+
+            # Create workloads (RBD + CephFS) on the same node for a clear
+            # migration target when that node is outaged.
             for interface in [constants.CEPHBLOCKPOOL, constants.CEPHFILESYSTEM]:
-                pod_obj = deployment_pod_factory(interface=interface)
+                pod_obj = deployment_pod_factory(
+                    interface=interface, node_name=target_node_name
+                )
                 pod_obj_list.append(pod_obj)
+
+            for pod_obj in pod_obj_list:
+                assert verify_node_name(pod_obj, target_node_name), (
+                    f"Pod {pod_obj.name} must run on {target_node_name} with "
+                    "the other workload pod"
+                )
+            pvc_to_node_before = {
+                p.pvc.name: get_pod_node(p).name for p in pod_obj_list
+            }
+            logger.info(
+                f"Workloads co-located on {target_node_name}; "
+                f"PVC, workload pod -> node before outage: {pvc_to_node_before}"
+            )
 
             logger.info(
                 f"Starting IO on {len(pod_obj_list)} app pods: "
@@ -136,31 +186,30 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
                 f"Stored initial checksums for pods {[p.name for p in pod_obj_list]}"
             )
 
-            node = get_pod_node(pod_obj_list[0])
             logger.info(
-                f"Workload running on node {node.name}; "
+                f"Workload running on node {outage_node.name}; "
                 f"waiting {self.WAIT_BEFORE_NODE_OUTAGE_SEC}s before outage"
             )
             time.sleep(self.WAIT_BEFORE_NODE_OUTAGE_SEC)
 
             if node_shutdown:
-                logger.info(f"Stopping node {node.name}")
-                nodes.stop_nodes([node])
+                logger.info(f"Stopping node {outage_node.name}")
+                nodes.stop_nodes([outage_node])
                 wait_for_nodes_status(
-                    node_names=[node.name], status=constants.NODE_NOT_READY
+                    node_names=[outage_node.name], status=constants.NODE_NOT_READY
                 )
-                logger.info(f"Node {node.name} is NotReady")
+                logger.info(f"Node {outage_node.name} is NotReady")
             else:
-                logger.info(f"Inducing network failure on node {node.name}")
-                node_network_failure([node.name])
+                logger.info(f"Inducing network failure on node {outage_node.name}")
+                node_network_failure([outage_node.name])
                 time.sleep(self.nw_fail_time)
 
             assert taint_nodes(
-                nodes=[node.name],
+                nodes=[outage_node.name],
                 taint_label=constants.NODE_OUT_OF_SERVICE_TAINT,
-            ), f"Failed to add taint on the node {node.name}"
-            self.taint_nodes_list.append(node)
-            logger.info(f"Applied out-of-service taint on node {node.name}")
+            ), f"Failed to add taint on the node {outage_node.name}"
+            self.taint_nodes_list.append(outage_node)
+            logger.info(f"Applied out-of-service taint on node {outage_node.name}")
 
             logger.info(
                 f"Waiting {self.WAIT_FOR_POD_MIGRATION_SEC}s for pods to "
@@ -168,8 +217,10 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
             )
             time.sleep(self.WAIT_FOR_POD_MIGRATION_SEC)
 
-            migrated_pod_list = get_all_pods(
-                namespace=pod_obj_list[0].namespace, wait=True
+            migrated_pod_list = pods_for_test_workload_pvcs(pod_obj_list, wait=True)
+            assert len(migrated_pod_list) == len(pod_obj_list), (
+                f"Expected {len(pod_obj_list)} workload pods after migration, "
+                f"got {len(migrated_pod_list)}: {[p.name for p in migrated_pod_list]}"
             )
             for pod_obj in migrated_pod_list:
                 wait_for_resource_state(
@@ -182,35 +233,47 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
                 f"{[p.name for p in migrated_pod_list]}"
             )
 
-            # Verify data integrity: compare against initial checksums
-            md5sum_after = [
-                cal_md5sum(pod_obj=p, file_name="io_file1") for p in migrated_pod_list
-            ]
-            assert len(md5sum_before) == len(md5sum_after), (
-                f"Pod count mismatch: before={len(md5sum_before)}, "
-                f"after={len(md5sum_after)}. "
-                f"md5sum before: {md5sum_before}, after: {md5sum_after}"
+            migrated_by_pvc = {get_pvc_name(p): p for p in migrated_pod_list}
+            for orig in pod_obj_list:
+                pvc_name = orig.pvc.name
+                migrated_pod = migrated_by_pvc[pvc_name]
+                node_after = get_pod_node(migrated_pod).name
+                node_before = pvc_to_node_before[pvc_name]
+                assert node_after != node_before, (
+                    f"Pod for PVC {pvc_name} should run on a different node "
+                    f"after migration; was {node_before}, now {node_after}"
+                )
+            logger.info(
+                "Each workload pod is running on a different node than before the outage"
             )
-            assert sorted(md5sum_before) == sorted(md5sum_after), (
+
+            # Verify data integrity per workload (PVC), matching pre-migration pods
+            md5sum_after = [
+                cal_md5sum(pod_obj=migrated_by_pvc[orig.pvc.name], file_name="io_file1")
+                for orig in pod_obj_list
+            ]
+            assert md5sum_before == md5sum_after, (
                 "Data corruption: checksums after migration do not match "
-                "initial values. "
-                f"md5sum before: {md5sum_before}, md5sum after: {md5sum_after}"
+                "initial values per PVC. "
+                f"md5sum before: {md5sum_before}, after: {md5sum_after}"
             )
             logger.info("Data integrity verified after migration")
 
             # Bring node online and remove taint
             if node_shutdown:
-                logger.info(f"Starting node {node.name}")
-                nodes.start_nodes([node])
+                logger.info(f"Starting node {outage_node.name}")
+                nodes.start_nodes([outage_node])
             else:
-                nodes.restart_nodes([node])
-            wait_for_nodes_status(node_names=[node.name], status=constants.NODE_READY)
+                nodes.restart_nodes([outage_node])
+            wait_for_nodes_status(
+                node_names=[outage_node.name], status=constants.NODE_READY
+            )
             assert untaint_nodes(
                 taint_label=constants.NODE_OUT_OF_SERVICE_TAINT,
-                nodes_to_untaint=[node],
-            ), f"Failed to remove the taint on node {node.name}"
+                nodes_to_untaint=[outage_node],
+            ), f"Failed to remove the taint on node {outage_node.name}"
             self.taint_nodes_list = []
-            logger.info(f"Node {node.name} is Ready and taint removed")
+            logger.info(f"Node {outage_node.name} is Ready and taint removed")
 
             # Run IO on migrated pods to verify writes on new node
             logger.info(
@@ -231,8 +294,10 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
                 logger.info(f"Deleting pod {pod_obj.name}")
                 pod_obj.delete()
             logger.info("Waiting for pods to be running again after delete")
-            redeployed_pod_list = get_all_pods(
-                namespace=pod_obj_list[0].namespace, wait=True
+            redeployed_pod_list = pods_for_test_workload_pvcs(pod_obj_list, wait=True)
+            assert len(redeployed_pod_list) == len(pod_obj_list), (
+                f"Expected {len(pod_obj_list)} workload pods after redeploy, "
+                f"got {len(redeployed_pod_list)}"
             )
             for pod_obj in redeployed_pod_list:
                 wait_for_resource_state(
@@ -246,12 +311,12 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
             )
 
             # Deploy new workload on the recovered node
-            logger.info(f"Deploying new pods on recovered node {node.name}")
+            logger.info(f"Deploying new pods on recovered node {outage_node.name}")
             for interface in [
                 constants.CEPHBLOCKPOOL,
                 constants.CEPHFILESYSTEM,
             ]:
-                deployment_pod_factory(interface=interface, node_name=node.name)
+                deployment_pod_factory(interface=interface, node_name=outage_node.name)
         finally:
             # Ensure taints are removed even on test failure (node_restart_teardown
             # fixture finalizer runs at test end to restore/restart nodes)

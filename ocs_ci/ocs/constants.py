@@ -3557,8 +3557,7 @@ NETSPLIT_ARBITER_DATA_1_AND_DATA_1_DATA_2 = (
     f"{ARBITER_ZONE}{DATA_ZONE_1}-{DATA_ZONE_1}{DATA_ZONE_2}"
 )
 
-# Taint used by NetworkFence / node out-of-service; allows CSI to fence the node
-# and migrate workloads (see node.kubernetes.io/out-of-service)
+# Taint marking a node as out-of-service, enabling forced volume detach and pod rescheduling
 NODE_OUT_OF_SERVICE_TAINT = "node.kubernetes.io/out-of-service=nodeshutdown:NoExecute"
 
 # Logwriter workload labels
