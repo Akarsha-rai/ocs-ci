@@ -1,4 +1,3 @@
-# noqa: D205
 """
 RHSTOR-6942 - Automate the NetworkFence workflow with cephcsi on non-stretch cluster.
 
@@ -6,6 +5,7 @@ Tests workload migration with PVCs during node outage: create workload,
 shut down or network-fail node, taint out-of-service, verify workload migration
 and data integrity, recover node, remove taint, verify IO and redeploy on node.
 """
+
 import logging
 import time
 
