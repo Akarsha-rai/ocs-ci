@@ -330,6 +330,6 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
                         taint_label=constants.NODE_OUT_OF_SERVICE_TAINT,
                         nodes_to_untaint=list(self.taint_nodes_list),
                     )
+                    self.taint_nodes_list = []
                 except Exception as e:
                     logger.warning("untaint_nodes raised: %s", e)
-                self.taint_nodes_list = []
