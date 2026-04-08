@@ -13,26 +13,38 @@ import pytest
 
 from ocs_ci.framework.testlib import ManageTest, tier4b, green_squad
 from ocs_ci.ocs import constants
-from ocs_ci.ocs.exceptions import UnavailableResourceException
 from ocs_ci.ocs.resources.pod import (
     cal_md5sum,
     get_pod_node,
     get_fio_rw_iops,
     get_all_pods,
-    get_pvc_name,
-    verify_node_name,
 )
 from ocs_ci.ocs.node import (
-    get_node_objs,
     get_worker_nodes,
     node_network_failure,
+    schedule_nodes,
     taint_nodes,
+    unschedule_nodes,
     untaint_nodes,
     wait_for_nodes_status,
 )
 from ocs_ci.helpers.helpers import wait_for_resource_state
 
 logger = logging.getLogger(__name__)
+
+
+def pvc_claim_name_from_pod_data(pod_obj):
+    """
+    First PVC claimName from ``pod_obj.data`` (list API body), without ``oc get``.
+
+    Avoids NotFound when the pod list still names replicas that are already gone.
+    """
+    volumes = pod_obj.data.get("spec", {}).get("volumes") or []
+    for volume in volumes:
+        pvc = volume.get("persistentVolumeClaim")
+        if pvc:
+            return pvc.get("claimName")
+    return None
 
 
 def pods_for_test_workload_pvcs(pod_obj_list, wait):
@@ -45,11 +57,9 @@ def pods_for_test_workload_pvcs(pod_obj_list, wait):
     all_pods = get_all_pods(namespace=namespace, wait=wait)
     matched = []
     for p in all_pods:
-        try:
-            if get_pvc_name(p) in target_pvcs:
-                matched.append(p)
-        except UnavailableResourceException:
-            continue
+        pvc_name = pvc_claim_name_from_pod_data(p)
+        if pvc_name and pvc_name in target_pvcs:
+            matched.append(p)
     return matched
 
 
@@ -120,17 +130,18 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
         Test workload migration with PVCs during a node outage.
 
         Steps:
-        1. Create and verify workloads (deployment type) using PVCs, both
-           scheduled on the same worker node.
-        2. Shut down the node or induce network failure; apply "out-of-service"
+        1. Cordon all workers but one; create workloads without nodeName; verify
+           both pods landed on the only schedulable worker; uncordon the rest.
+        2. Shut down that node or induce network failure; apply "out-of-service"
            taint and verify node NotReady.
-        3. Confirm each workload moved to a node different from the one it
-           used before the outage, and data is accessible.
+        3. Confirm each workload moved to a different node than before, and
+           data is accessible.
         4. Bring node online and verify Ready state.
         5. Remove the taint.
         6. Verify new files can be written to the PVC on the new node.
-        7. Move workload back to recovered node and verify it works.
-        8. Deploy new pod on the recovered node.
+        7. Delete pods and verify they come back on the PVCs.
+        8. Cordon other workers; deploy new workloads so they schedule only on
+           the recovered node; uncordon.
         """
         pod_obj_list = []
         try:
@@ -140,28 +151,36 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
                     "At least two worker nodes are required so workloads can "
                     "migrate when one node is unavailable"
                 )
-            target_node_name = worker_node_names[0]
-            outage_node = get_node_objs(node_names=[target_node_name])[0]
 
-            # Create workloads (RBD + CephFS) on the same node for a clear
-            # migration target when that node is outaged.
-            for interface in [constants.CEPHBLOCKPOOL, constants.CEPHFILESYSTEM]:
-                pod_obj = deployment_pod_factory(
-                    interface=interface, node_name=target_node_name
-                )
-                pod_obj_list.append(pod_obj)
+            # Co-locate without pod spec nodeName: only one worker schedulable.
+            co_locate_node_name = worker_node_names[0]
+            workers_to_cordon = [
+                n for n in worker_node_names if n != co_locate_node_name
+            ]
+            unschedule_nodes(workers_to_cordon)
+            try:
+                for interface in [
+                    constants.CEPHBLOCKPOOL,
+                    constants.CEPHFILESYSTEM,
+                ]:
+                    pod_obj = deployment_pod_factory(interface=interface)
+                    pod_obj_list.append(pod_obj)
 
-            for pod_obj in pod_obj_list:
-                assert verify_node_name(pod_obj, target_node_name), (
-                    f"Pod {pod_obj.name} must run on {target_node_name} with "
-                    "the other workload pod"
+                pod_nodes = {get_pod_node(p).name for p in pod_obj_list}
+                assert pod_nodes == {co_locate_node_name}, (
+                    f"Expected both workloads on {co_locate_node_name} while "
+                    f"other workers were cordoned; got {pod_nodes}"
                 )
+            finally:
+                schedule_nodes(workers_to_cordon)
+
+            outage_node = get_pod_node(pod_obj_list[0])
             pvc_to_node_before = {
                 p.pvc.name: get_pod_node(p).name for p in pod_obj_list
             }
             logger.info(
-                f"Workloads co-located on {target_node_name}; "
-                f"PVC, workload pod -> node before outage: {pvc_to_node_before}"
+                f"Workloads co-located on {outage_node.name} (no nodeName in pod "
+                f"spec); PVC -> node before outage: {pvc_to_node_before}"
             )
 
             logger.info(
@@ -233,7 +252,11 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
                 f"{[p.name for p in migrated_pod_list]}"
             )
 
-            migrated_by_pvc = {get_pvc_name(p): p for p in migrated_pod_list}
+            migrated_by_pvc = {}
+            for p in migrated_pod_list:
+                claim = pvc_claim_name_from_pod_data(p)
+                assert claim, f"Could not read PVC from pod data for {p.name}"
+                migrated_by_pvc[claim] = p
             for orig in pod_obj_list:
                 pvc_name = orig.pvc.name
                 migrated_pod = migrated_by_pvc[pvc_name]
