@@ -1582,17 +1582,18 @@ def taint_nodes(nodes, taint_label=None):
     """
     ocp_obj = ocp.OCP()
     taint_label = taint_label if taint_label else constants.OPERATOR_NODE_TAINT
-    result = False
+    if not nodes:
+        return True
+    all_succeeded = True
     for node in nodes:
         command = f"adm taint node {node} {taint_label}"
         try:
             ocp_obj.exec_oc_cmd(command)
             log.info(f"Successfully tainted {node} with taint {taint_label}")
-            result = True
         except Exception as e:
             log.info(f"{node} was not tainted - {e}")
-            result = False
-    return result
+            all_succeeded = False
+    return all_succeeded
 
 
 def has_taint(node_obj, taint):
@@ -2838,34 +2839,6 @@ def wait_for_node_count_to_reach_status(
                 f"The nodes {node_names_in_expected_status} reached the expected status {expected_status}, "
                 f"but we were waiting for {node_count} of them to reach status {expected_status}"
             )
-
-
-def check_for_zombie_process_on_node(node_name=None):
-    """
-    Check if there are any zombie process on the nodes
-
-    Args:
-        node_name (list): Node names list to check for zombie process
-
-    Raise:
-        ZombieProcessFoundException: In case zombie process are found on the node
-
-    """
-    node_obj_list = get_node_objs(node_name) if node_name else get_node_objs()
-    for node_obj in node_obj_list:
-        debug_cmd = (
-            f"debug nodes/{node_obj.name} --to-namespace=default "
-            '-- chroot /host /bin/bash -c "ps -A -ostat,pid,ppid | grep -e [zZ]"'
-        )
-        out = node_obj.ocp.exec_oc_cmd(
-            command=debug_cmd, ignore_error=True, out_yaml_format=False
-        )
-        if not out:
-            log.info(f"No Zombie process found on the node: {node_obj.name}")
-        else:
-            log.error(f"Zombie process found on node: {node_obj.name}")
-            log.error(f"pid and ppid details: {out}")
-            raise exceptions.ZombieProcessFoundException
 
 
 @switch_to_orig_index_at_last
