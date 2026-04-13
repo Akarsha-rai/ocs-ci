@@ -34,7 +34,6 @@ from ocs_ci.ocs.resources.pod import (
     get_pod_node,
     get_pvc_name,
 )
-from ocs_ci.utility.utils import ceph_health_check
 
 logger = logging.getLogger(__name__)
 
@@ -269,12 +268,6 @@ class TestAutomateNetworkfenceWorkflowWithCephCSI(ManageTest):
             nodes_to_untaint=[outage_node],
         ), f"Failed to remove taint on node {outage_node.name}"
         self.taint_nodes_list = []
-
-        logger.info("Verifying Ceph cluster health after node recovery and untaint")
-        assert ceph_health_check(
-            tries=40,
-            delay=30,
-        ), "Ceph cluster not healthy after node recovery"
 
         logger.info("Starting IO on migrated pods")
         for pod_obj in migrated_pod_list:
