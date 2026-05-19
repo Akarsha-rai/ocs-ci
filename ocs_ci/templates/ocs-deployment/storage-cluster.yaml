@@ -5,6 +5,8 @@ metadata:
   namespace: openshift-storage
   name: ocs-storagecluster
 spec:
+  encryption:
+    enable: true
   storageDeviceSets:
   - name: ocs-deviceset
     count: 1
