@@ -172,15 +172,47 @@ class VSPHEREBASE(Deployment):
             ssd (bool): if True, mark disk as SSD
 
         """
+        # Import here to avoid circular dependency
+        from ocs_ci.deployment.helpers.stretch_cluster_disk_helpers import (
+            should_use_varied_disk_sizes,
+            get_disk_sizes_for_deployment,
+            log_disk_configuration_for_stretch_cluster,
+        )
+        
         vms = self.vsphere.get_all_vms_in_pool(
             config.ENV_DATA.get("cluster_name"), self.datacenter, self.cluster
         )
-        # Add disks to all worker nodes
-        for vm in vms:
-            if "compute" in vm.name:
-                self.vsphere.add_disks_with_same_size(
-                    config.ENV_DATA.get("extra_disks", 1), vm, size, disk_type, ssd
-                )
+        
+        # Check if we should use varied disk sizes for stretch cluster testing
+        use_varied_sizes = should_use_varied_disk_sizes()
+        
+        if use_varied_sizes:
+            log_disk_configuration_for_stretch_cluster()
+            disk_sizes = get_disk_sizes_for_deployment(size)
+            
+            # Add varied disks to worker nodes
+            disk_index = 0
+            for vm in vms:
+                if "compute" in vm.name:
+                    # Get disk sizes for this VM
+                    num_disks = config.ENV_DATA.get("extra_disks", 1)
+                    vm_disk_sizes = disk_sizes[disk_index:disk_index + num_disks]
+                    
+                    logger.info(
+                        f"Adding {len(vm_disk_sizes)} disks to {vm.name} "
+                        f"with sizes: {vm_disk_sizes}GB (varied for DFBUGS-2885 testing)"
+                    )
+                    
+                    # Add disks with varied sizes
+                    self.vsphere.add_disks(vm, vm_disk_sizes, disk_type, ssd)
+                    disk_index += num_disks
+        else:
+            # Original behavior: add disks with same size
+            for vm in vms:
+                if "compute" in vm.name:
+                    self.vsphere.add_disks_with_same_size(
+                        config.ENV_DATA.get("extra_disks", 1), vm, size, disk_type, ssd
+                    )
 
     def add_nodes(self):
         """
