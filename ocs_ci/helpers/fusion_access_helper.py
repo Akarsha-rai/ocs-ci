@@ -485,6 +485,174 @@ def wait_for_filesystem_mounted(node_names, timeout=900, sleep_time=30):
         )
 
 
+def is_api_available(timeout=20):
+    """
+    Check whether the OpenShift API server answers.
+
+    Used by the tests that take down a majority of the control plane nodes,
+    where losing the API is the expected condition rather than a failure.
+
+    Args:
+        timeout (int): Time in seconds to allow the request to take
+
+    Returns:
+        bool: True if the API answered, False otherwise
+
+    """
+    try:
+        # '--request-timeout' bounds the call, without it the request hangs
+        # for the whole duration of the outage instead of failing fast
+        OCP().exec_oc_cmd(
+            f"get nodes --request-timeout={timeout}s", out_yaml_format=False
+        )
+        return True
+    except Exception as ex:
+        logger.debug(f"The OpenShift API did not answer: {ex}")
+        return False
+
+
+def wait_for_api_unavailable(timeout=600, sleep_time=20):
+    """
+    Wait for the OpenShift API server to stop answering.
+
+    Taking down a data zone together with the arbiter takes two of the three
+    control plane nodes with it, so etcd loses quorum and the API goes away.
+    That is the condition under test, waiting for it is how the test confirms
+    the quorum loss really happened rather than assuming it.
+
+    Args:
+        timeout (int): Time in seconds to wait for the API to go away
+        sleep_time (int): Time in seconds between two checks
+
+    Raises:
+        UnexpectedBehaviour: If the API is still answering within the timeout
+
+    """
+    logger.info("Waiting for the OpenShift API to become unavailable")
+    try:
+        for available in TimeoutSampler(
+            timeout=timeout, sleep=sleep_time, func=is_api_available
+        ):
+            if not available:
+                logger.info("The OpenShift API is unavailable, as expected")
+                return
+            logger.info("The OpenShift API is still answering, waiting")
+    except TimeoutExpiredError:
+        raise UnexpectedBehaviour(
+            f"The OpenShift API is still answering after {timeout} seconds. "
+            f"etcd did not lose quorum, so the nodes that were supposed to go "
+            f"down either did not, or they do not hold a majority of the "
+            f"control plane"
+        )
+
+
+def wait_for_api_available(timeout=1800, sleep_time=30):
+    """
+    Wait for the OpenShift API server to answer again.
+
+    etcd has to re-form quorum and catch up before the API serves requests, so
+    this takes considerably longer than the nodes booting. Nothing else in the
+    test can run until it returns.
+
+    Args:
+        timeout (int): Time in seconds to wait for the API to come back
+        sleep_time (int): Time in seconds between two checks
+
+    Raises:
+        UnexpectedBehaviour: If the API does not answer within the timeout
+
+    """
+    logger.info("Waiting for the OpenShift API to become available again")
+    try:
+        for available in TimeoutSampler(
+            timeout=timeout, sleep=sleep_time, func=is_api_available
+        ):
+            if available:
+                logger.info("The OpenShift API is answering again")
+                return
+            logger.info("The OpenShift API is still down, waiting")
+    except TimeoutExpiredError:
+        raise UnexpectedBehaviour(
+            f"The OpenShift API did not come back within {timeout} seconds, "
+            f"etcd failed to re-form quorum after the nodes were started"
+        )
+
+
+def get_gpfs_inactive_nodes(exclude_nodes=None):
+    """
+    Get the nodes of the Storage Scale cluster whose GPFS daemon is not active.
+
+    'mmgetstate -a' lists one line per node, the node name in the second column
+    and its state in the third. While the cluster has no quorum the command
+    fails outright, which is reported as every node being inactive rather than
+    raising, so that a caller polling for recovery keeps waiting.
+
+    Args:
+        exclude_nodes (list): Names of the nodes whose core pod must not be
+            used to run the command
+
+    Returns:
+        set: Names of the nodes whose GPFS daemon is not active
+
+    """
+    try:
+        core_pod = get_scale_core_pod(exclude_nodes=exclude_nodes)
+        out = core_pod.exec_cmd_on_pod(
+            command="mmgetstate -a", container_name="gpfs", out_yaml_format=False
+        )
+    except (CommandFailed, UnexpectedBehaviour) as ex:
+        logger.info(f"mmgetstate is not answering yet: {ex}")
+        return {"<cluster has no quorum>"}
+
+    inactive = set()
+    for line in str(out).splitlines():
+        fields = line.split()
+        # Skip the header and the separator, a node line starts with its number
+        if len(fields) >= 3 and fields[0].isdigit():
+            if fields[2] != "active":
+                inactive.add(fields[1])
+
+    return inactive
+
+
+def wait_for_gpfs_cluster_active(timeout=1800, sleep_time=30, exclude_nodes=None):
+    """
+    Wait for every node of the Storage Scale cluster to report GPFS active.
+
+    A node reporting Ready says nothing about GPFS on it: the core pod still
+    has to start, load the kmod and rejoin the cluster. After a quorum loss the
+    whole cluster has to re-form before any node is active, so this is the
+    check that tells the storage cluster really recovered.
+
+    Args:
+        timeout (int): Time in seconds to wait for the cluster to be active
+        sleep_time (int): Time in seconds between two checks
+        exclude_nodes (list): Names of the nodes whose core pod must not be
+            used to run the command
+
+    Raises:
+        UnexpectedBehaviour: If any node is still not active within the timeout
+
+    """
+    logger.info("Waiting for every node of the Storage Scale cluster to be active")
+    try:
+        for inactive in TimeoutSampler(
+            timeout=timeout,
+            sleep=sleep_time,
+            func=get_gpfs_inactive_nodes,
+            exclude_nodes=exclude_nodes,
+        ):
+            if not inactive:
+                logger.info("Every node of the Storage Scale cluster is active")
+                return
+            logger.info(f"GPFS is not active yet on {sorted(inactive)}, waiting")
+    except TimeoutExpiredError:
+        raise UnexpectedBehaviour(
+            f"Some nodes of the Storage Scale cluster are still not active "
+            f"after {timeout} seconds"
+        )
+
+
 def create_workload_from_template(
     template_path, namespace, sc_name=None, teardown_factory=None
 ):
